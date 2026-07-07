@@ -112,6 +112,11 @@ class SSHManager:
         self.strict_host_key_checking = app.config.get(
             "SSH_TUNNEL_STRICT_HOST_KEY_CHECKING", False
         )
+        # Algorithms rejected on the paramiko Transport Superset opens directly.
+        # Defaults to disabling SHA-1 ``ssh-rsa`` (CVE-2026-44405). See the config
+        # docstring and UPDATING.md for why this cannot cover the sshtunnel-managed
+        # tunnel connection.
+        self.disabled_algorithms = app.config.get("SSH_TUNNEL_DISABLED_ALGORITHMS", {})
         sshtunnel.TUNNEL_TIMEOUT = app.config["SSH_TUNNEL_TIMEOUT_SEC"]
         sshtunnel.SSH_TIMEOUT = app.config["SSH_TUNNEL_PACKET_TIMEOUT_SEC"]
 
@@ -180,7 +185,12 @@ class SSHManager:
                 message=f"Could not connect to the SSH server: {ex}"
             ) from ex
 
-        transport = paramiko.Transport(sock)
+        # ``disabled_algorithms`` rejects SHA-1 ``ssh-rsa`` here so the host-key probe
+        # negotiates rsa-sha2 signatures (CVE-2026-44405). Pass ``None`` when nothing is
+        # configured to preserve paramiko's defaults.
+        transport = paramiko.Transport(
+            sock, disabled_algorithms=self.disabled_algorithms or None
+        )
         try:
             transport.start_client(timeout=sshtunnel.SSH_TIMEOUT)
             remote_key = transport.get_remote_server_key()
@@ -250,6 +260,11 @@ class SSHManager:
                 ssh_tunnel.private_key, ssh_tunnel.private_key_password
             )
 
+        # NOTE (CVE-2026-44405): sshtunnel builds the tunnel's paramiko Transport
+        # internally and does not accept ``disabled_algorithms`` (unknown kwargs raise),
+        # so SHA-1 ``ssh-rsa`` cannot be disabled on this connection here. Tracked as an
+        # accepted, monitored risk pending an upstream paramiko/sshtunnel fix; see
+        # UPDATING.md.
         return sshtunnel.open_tunnel(**params)
 
 

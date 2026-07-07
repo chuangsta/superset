@@ -947,6 +947,23 @@ SSH_TUNNEL_PACKET_TIMEOUT_SEC = 1.0
 #: ``server_host_key`` are still verified regardless of this flag.
 SSH_TUNNEL_STRICT_HOST_KEY_CHECKING: bool = False
 
+#: Algorithms to disable on the SSH connections Superset opens for DB tunnels,
+#: passed through to paramiko's ``Transport(disabled_algorithms=...)``. The default
+#: rejects the legacy ``ssh-rsa`` algorithm, which relies on SHA-1 (CVE-2026-44405 /
+#: GHSA-r374-rxx8-8654); modern servers negotiate ``rsa-sha2-256`` / ``rsa-sha2-512``
+#: instead. Set to ``{}`` to restore SHA-1 support when connecting to legacy servers
+#: that only offer ``ssh-rsa``.
+#:
+#: NOTE: Superset delegates the tunnel connection to the ``sshtunnel`` library, whose
+#: public API does not forward ``disabled_algorithms`` to the tunnel's own paramiko
+#: ``Transport``. This setting is therefore only applied to the host-key verification
+#: probe Superset opens directly (see ``superset/extensions/ssh.py``). See UPDATING.md
+#: for the accepted-risk rationale covering the tunnel connection itself.
+SSH_TUNNEL_DISABLED_ALGORITHMS: dict[str, list[str]] = {
+    "keys": ["ssh-rsa"],
+    "pubkeys": ["ssh-rsa"],
+}
+
 
 # Feature flags may also be set via 'SUPERSET_FEATURE_' prefixed environment vars.
 DEFAULT_FEATURE_FLAGS.update(

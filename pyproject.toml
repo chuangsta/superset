@@ -88,7 +88,12 @@ dependencies = [
     "bottleneck", # recommended performance dependency for pandas, see https://pandas.pydata.org/docs/getting_started/install.html#performance-dependencies-recommended
     # --------------------------
     "parsedatetime",
-    "paramiko>=3.4.0, <4.0", # 4.0 removed DSSKey, still referenced by sshtunnel
+    # 4.0 removed DSSKey, still referenced by sshtunnel.
+    # CVE-2026-44405 / GHSA-r374-rxx8-8654: paramiko (through 4.0.0) allows SHA-1 in
+    # rsakey.py; no upstream fix published yet. Mitigated via SSH_TUNNEL_DISABLED_ALGORITHMS
+    # (see superset/extensions/ssh.py, UPDATING.md). Re-check for a patched release before
+    # widening this bound.
+    "paramiko>=3.4.0, <4.0",
     "pgsanity",
     "Pillow>=11.0.0, <13",
     "polyline>=2.0.0, <3.0",
