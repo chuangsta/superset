@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
 
     steps:
       - name: Checkout repo
@@ -51,7 +52,34 @@ jobs:
           BODYEOF
           fi
 
+      - name: Check for existing open PR
+        id: pr-check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ steps.issue.outputs.number }}
+        run: |
+          EXISTING_PR=$(gh pr list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --json number,body \
+            --jq "[.[] | select(.body | test(\"(Closes|Fixes|Resolves) #${ISSUE_NUM}\\b\"; \"i\"))] | length")
+          echo "open_prs=${EXISTING_PR}" >> $GITHUB_OUTPUT
+          if [ "${EXISTING_PR}" -gt 0 ]; then
+            echo "::notice::Skipping Devin session — ${EXISTING_PR} open PR(s) already reference issue #${ISSUE_NUM}."
+          fi
+
+      - name: Remove devin-remediate label (PR already open)
+        if: steps.pr-check.outputs.open_prs != '0' && github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ steps.issue.outputs.number }}
+        run: |
+          gh issue edit "${ISSUE_NUM}" \
+            --repo "${{ github.repository }}" \
+            --remove-label "devin-remediate" || true
+
       - name: Create Devin session
+        if: steps.pr-check.outputs.open_prs == '0'
         id: devin
         env:
           DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
@@ -115,6 +143,7 @@ jobs:
           echo "✅ Devin session created: ${SESSION_ID} for issue #${ISSUE_NUM}"
 
       - name: Log session to session-log.json
+        if: steps.pr-check.outputs.open_prs == '0'
         env:
           ISSUE_NUM: ${{ steps.issue.outputs.number }}
           ISSUE_TITLE: ${{ steps.issue.outputs.title }}
@@ -122,11 +151,9 @@ jobs:
         run: |
           pip install jq 2>/dev/null || true
 
-          # Read existing log
           LOG="session-log.json"
           EXISTING=$(cat "$LOG" 2>/dev/null || echo "[]")
 
-          # Append new entry
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           NEW_ENTRY=$(jq -n \
             --arg session_id "$SESSION_ID" \
@@ -149,6 +176,7 @@ jobs:
           cat "$LOG"
 
       - name: Commit session log
+        if: steps.pr-check.outputs.open_prs == '0'
         run: |
           git config user.name "devin-status-bot"
           git config user.email "bot@users.noreply.github.com"
