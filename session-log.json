@@ -7,5 +7,14 @@
     "status": "running",
     "pr_url": null,
     "acus_consumed": null
+  },
+  {
+    "session_id": "c8f664ffc193471b9f9227b8ff4108d4",
+    "issue_number": 7,
+    "issue_title": "[CVE-2026-44405] Paramiko 3.5.1 allows SHA-1 in rsakey.py (no fix version yet)",
+    "triggered_at": "2026-07-07T12:01:41Z",
+    "status": "running",
+    "pr_url": null,
+    "acus_consumed": null
   }
 ]
