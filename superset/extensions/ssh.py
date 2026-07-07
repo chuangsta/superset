@@ -112,6 +112,14 @@ class SSHManager:
         self.strict_host_key_checking = app.config.get(
             "SSH_TUNNEL_STRICT_HOST_KEY_CHECKING", False
         )
+        # Mitigation for CVE-2026-44405: reject the legacy SHA-1 ``ssh-rsa`` signature
+        # algorithm on the host-key verification probe (the connection we open
+        # directly), forcing paramiko to negotiate ``rsa-sha2-256`` / ``rsa-sha2-512``.
+        # The tunnel that carries traffic is opened by ``sshtunnel``, which builds its
+        # own ``paramiko.Transport`` and exposes no ``disabled_algorithms`` hook, so
+        # that connection is a documented residual risk (see the config docstring for
+        # ``SSH_TUNNEL_REJECT_SHA1_KEYS`` and UPDATING.md).
+        self.reject_sha1_keys = app.config.get("SSH_TUNNEL_REJECT_SHA1_KEYS", True)
         sshtunnel.TUNNEL_TIMEOUT = app.config["SSH_TUNNEL_TIMEOUT_SEC"]
         sshtunnel.SSH_TIMEOUT = app.config["SSH_TUNNEL_PACKET_TIMEOUT_SEC"]
 
@@ -180,7 +188,12 @@ class SSHManager:
                 message=f"Could not connect to the SSH server: {ex}"
             ) from ex
 
-        transport = paramiko.Transport(sock)
+        # ``disabled_algorithms`` drops the SHA-1 ``ssh-rsa`` public-key algorithm so
+        # the handshake authenticates the server's host key with a SHA-2 signature.
+        disabled_algorithms = (
+            {"pubkeys": ["ssh-rsa"]} if self.reject_sha1_keys else None
+        )
+        transport = paramiko.Transport(sock, disabled_algorithms=disabled_algorithms)
         try:
             transport.start_client(timeout=sshtunnel.SSH_TIMEOUT)
             remote_key = transport.get_remote_server_key()

@@ -947,6 +947,27 @@ SSH_TUNNEL_PACKET_TIMEOUT_SEC = 1.0
 #: ``server_host_key`` are still verified regardless of this flag.
 SSH_TUNNEL_STRICT_HOST_KEY_CHECKING: bool = False
 
+#: Reject the legacy SHA-1 ``ssh-rsa`` signature algorithm during the host-key
+#: verification handshake (mitigation for CVE-2026-44405, which flags that paramiko
+#: still permits SHA-1 in ``rsakey.py``). When enabled (the default), the pre-flight
+#: probe that Superset opens to read and verify the SSH server's host key disables
+#: ``ssh-rsa`` and negotiates only the modern ``rsa-sha2-256`` / ``rsa-sha2-512``
+#: signatures, which every SSH server from the last several years supports.
+#:
+#: Set this to ``False`` only if you must verify a host key against a legacy SSH
+#: server that offers RSA host keys with SHA-1 signatures exclusively.
+#:
+#: KNOWN / ACCEPTED RISK: this flag can only harden the verification probe, which is
+#: the connection Superset opens directly. The tunnel that actually carries traffic is
+#: opened by ``sshtunnel`` (pinned ``sshtunnel>=0.4.0,<0.5``), whose
+#: ``SSHTunnelForwarder`` builds its own ``paramiko.Transport`` internally and exposes
+#: no way to pass ``disabled_algorithms``, so SHA-1 cannot be rejected on that
+#: connection through configuration. No upstream paramiko fix for CVE-2026-44405 has
+#: been published. Re-check on the next paramiko / sshtunnel release and drop this
+#: residual note once either upstream removes SHA-1 or sshtunnel exposes
+#: ``disabled_algorithms``. See UPDATING.md and ``superset/extensions/ssh.py``.
+SSH_TUNNEL_REJECT_SHA1_KEYS: bool = True
+
 
 # Feature flags may also be set via 'SUPERSET_FEATURE_' prefixed environment vars.
 DEFAULT_FEATURE_FLAGS.update(

@@ -44,7 +44,7 @@ from superset.commands.database.ssh_tunnel.exceptions import (
 from superset.extensions.ssh import SSHManager, SSHManagerFactory
 
 
-def _make_manager(strict: bool = False) -> SSHManager:
+def _make_manager(strict: bool = False, reject_sha1_keys: bool = True) -> SSHManager:
     """Build an ``SSHManager`` test instance with configurable strict checking."""
     app = Mock()
     app.config = {
@@ -54,6 +54,7 @@ def _make_manager(strict: bool = False) -> SSHManager:
         "SSH_TUNNEL_PACKET_TIMEOUT_SEC": 321.0,
         "SSH_TUNNEL_MANAGER_CLASS": "superset.extensions.ssh.SSHManager",
         "SSH_TUNNEL_STRICT_HOST_KEY_CHECKING": strict,
+        "SSH_TUNNEL_REJECT_SHA1_KEYS": reject_sha1_keys,
     }
     return SSHManager(app)
 
@@ -269,7 +270,10 @@ def test_verify_host_key_match(
     mock_create_connection.assert_called_once_with(
         ("ssh.example.com", 22), timeout=321.0
     )
-    mock_transport_cls.assert_called_once_with(mock_create_connection.return_value)
+    mock_transport_cls.assert_called_once_with(
+        mock_create_connection.return_value,
+        disabled_algorithms={"pubkeys": ["ssh-rsa"]},
+    )
     transport.start_client.assert_called_once()
     transport.close.assert_called_once()
     # The parsed expected key is returned so the caller can pin it on the tunnel.
@@ -358,9 +362,46 @@ def test_verify_host_key_match_ignores_comment_and_whitespace(
     mock_create_connection.assert_called_once_with(
         ("ssh.example.com", 22), timeout=321.0
     )
-    mock_transport_cls.assert_called_once_with(mock_create_connection.return_value)
+    mock_transport_cls.assert_called_once_with(
+        mock_create_connection.return_value,
+        disabled_algorithms={"pubkeys": ["ssh-rsa"]},
+    )
     transport.start_client.assert_called_once()
     transport.close.assert_called_once()
+
+
+@patch("superset.extensions.ssh.socket.create_connection")
+@patch("superset.extensions.ssh.paramiko.Transport")
+def test_verify_host_key_rejects_sha1_by_default(
+    mock_transport_cls: Mock, mock_create_connection: Mock
+) -> None:
+    """CVE-2026-44405 mitigation: the verification probe disables SHA-1 ``ssh-rsa``."""
+    server_key = paramiko.RSAKey.generate(2048)
+    manager = _make_manager(reject_sha1_keys=True)
+    tunnel = _ssh_tunnel(_authorized_key(server_key))
+    mock_transport_cls.return_value.get_remote_server_key.return_value = server_key
+
+    manager._verify_host_key(tunnel)
+
+    _, kwargs = mock_transport_cls.call_args
+    assert kwargs["disabled_algorithms"] == {"pubkeys": ["ssh-rsa"]}
+
+
+@patch("superset.extensions.ssh.socket.create_connection")
+@patch("superset.extensions.ssh.paramiko.Transport")
+def test_verify_host_key_allows_sha1_when_opted_out(
+    mock_transport_cls: Mock, mock_create_connection: Mock
+) -> None:
+    """Opt-out (legacy servers): no algorithms are disabled on the probe."""
+    server_key = paramiko.RSAKey.generate(2048)
+    manager = _make_manager(reject_sha1_keys=False)
+    tunnel = _ssh_tunnel(_authorized_key(server_key))
+    mock_transport_cls.return_value.get_remote_server_key.return_value = server_key
+
+    manager._verify_host_key(tunnel)
+
+    _, kwargs = mock_transport_cls.call_args
+    assert kwargs["disabled_algorithms"] is None
 
 
 def test_verify_host_key_invalid_expected_raises() -> None:
