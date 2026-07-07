@@ -1,0 +1,138 @@
+name: Devin Session Status Check
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # every 15 minutes
+  workflow_dispatch:         # manual trigger for demo
+
+jobs:
+  poll-sessions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Poll Devin sessions and update status
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_ORG_ID: ${{ secrets.DEVIN_ORG_ID }}
+        run: |
+          cat << 'EOF' > poll_sessions.py
+          import json
+          import os
+          import datetime
+          import requests
+
+          API = "https://api.devin.ai/v3/organizations"
+          ORG = os.environ["DEVIN_ORG_ID"]
+          KEY = os.environ["DEVIN_API_KEY"]
+          HDR = {"Authorization": f"Bearer {KEY}"}
+          LOG = "session-log.json"
+          OUT_JSON = "status.json"
+          OUT_MD = "status.md"
+
+          # Load existing session log
+          if os.path.exists(LOG):
+              log = json.load(open(LOG))
+          else:
+              print("No session-log.json found — nothing to poll yet.")
+              log = []
+
+          if not log:
+              # Write empty status files so the commit step doesn't fail
+              json.dump([], open(OUT_JSON, "w"), indent=2)
+              with open(OUT_MD, "w") as f:
+                  f.write("# Devin Remediation Status\n\n")
+                  f.write("No sessions logged yet.\n")
+              exit(0)
+
+          rows = []
+          for entry in log:
+              sid = entry["session_id"]
+              try:
+                  r = requests.get(
+                      f"{API}/{ORG}/sessions/{sid}",
+                      headers=HDR,
+                      timeout=10
+                  ).json()
+                  prs = r.get("pull_requests") or []
+                  pr_url = prs[0].get("pr_url") if prs else None
+                  pr_state = prs[0].get("pr_state") if prs else None
+                  entry.update({
+                      "status": r.get("status_enum"),
+                      "pr_url": pr_url,
+                      "pr_state": pr_state,
+                      "acus_consumed": r.get("acus_consumed"),
+                      "structured_output": r.get("structured_output"),
+                      "polled_at": datetime.datetime.utcnow().isoformat(),
+                  })
+              except Exception as e:
+                  entry["poll_error"] = str(e)
+              rows.append(entry)
+
+          # Write machine-readable status
+          json.dump(rows, open(OUT_JSON, "w"), indent=2)
+
+          # Write human-readable dashboard
+          with open(OUT_MD, "w") as f:
+              f.write("# Devin Remediation Status\n\n")
+              f.write(f"Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n\n")
+
+              # Summary counts
+              total = len(rows)
+              complete = sum(1 for r in rows if r.get("status") == "stopped" and r.get("pr_url"))
+              blocked = sum(1 for r in rows if r.get("status") == "blocked")
+              running = sum(1 for r in rows if r.get("status") == "running")
+
+              f.write(f"| Metric | Count |\n")
+              f.write(f"|---|---|\n")
+              f.write(f"| Total sessions | {total} |\n")
+              f.write(f"| Complete (PR opened) | {complete} |\n")
+              f.write(f"| Running | {running} |\n")
+              f.write(f"| Blocked (needs human) | {blocked} |\n\n")
+
+              # Per-session detail
+              f.write("## Session detail\n\n")
+              f.write("| Issue | Session | Status | PR | ACUs | Last polled |\n")
+              f.write("|---|---|---|---|---|---|\n")
+              for r in rows:
+                  pr = f"[View PR]({r['pr_url']})" if r.get("pr_url") else "—"
+                  status = r.get("status", "unknown")
+                  acus = r.get("acus_consumed", "—")
+                  polled = r.get("polled_at", "—")[:16] if r.get("polled_at") else "—"
+                  sid_short = r["session_id"][:12] + "…"
+                  f.write(
+                      f"| #{r['issue_number']} "
+                      f"| {sid_short} "
+                      f"| {status} "
+                      f"| {pr} "
+                      f"| {acus} "
+                      f"| {polled} |\n"
+                  )
+
+          print("Status files updated.")
+          for r in rows:
+              print(f"  Issue #{r['issue_number']} — {r.get('status')} — PR: {r.get('pr_url','none')}")
+          EOF
+          python3 poll_sessions.py
+
+      - name: Commit updated status files
+        run: |
+          git config user.name "devin-status-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add status.json status.md session-log.json || true
+          git diff --staged --quiet || git commit -m "chore: update Devin remediation status [skip ci]"
+          git push
