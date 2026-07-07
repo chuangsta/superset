@@ -1,8 +1,6 @@
 name: Devin Session Status Check
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'  # every 15 minutes
   workflow_dispatch:         # manual trigger for demo
 
 jobs:
