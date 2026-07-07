@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "session_id": "dbb0b93eac5748a29c429493a0353459",
+    "issue_number": 6,
+    "issue_title": "[CVE-2026-27205] Flask 2.3.3 fails to set Vary: Cookie header on session access",
+    "triggered_at": "2026-07-07T12:01:22Z",
+    "status": "running",
+    "pr_url": null,
+    "acus_consumed": null
+  }
+]
