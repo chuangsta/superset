@@ -1,0 +1,107 @@
+name: Devin Remediation Dispatch
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to remediate'
+        required: true
+      issue_title:
+        description: 'Issue title'
+        required: true
+      issue_body:
+        description: 'Issue body content'
+        required: true
+
+jobs:
+  dispatch-devin:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.label.name == 'devin-remediate'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve issue details
+        id: issue
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "number=${{ github.event.inputs.issue_number }}" >> $GITHUB_OUTPUT
+            echo "title=${{ github.event.inputs.issue_title }}" >> $GITHUB_OUTPUT
+            cat >> $GITHUB_OUTPUT << 'BODYEOF'
+          body<<EOF
+          ${{ github.event.inputs.issue_body }}
+          EOF
+          BODYEOF
+          else
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+            echo "title=${{ github.event.issue.title }}" >> $GITHUB_OUTPUT
+            cat >> $GITHUB_OUTPUT << 'BODYEOF'
+          body<<EOF
+          ${{ github.event.issue.body }}
+          EOF
+          BODYEOF
+          fi
+
+      - name: Create Devin session
+        id: devin
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_ORG_ID: ${{ secrets.DEVIN_ORG_ID }}
+          ISSUE_NUM: ${{ steps.issue.outputs.number }}
+          ISSUE_TITLE: ${{ steps.issue.outputs.title }}
+          ISSUE_BODY: ${{ steps.issue.outputs.body }}
+        run: |
+          SCHEMA='{
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["in_progress", "blocked", "complete"]
+              },
+              "files_changed": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "pr_url": {"type": "string"},
+              "tests_passing": {"type": "boolean"},
+              "notes": {"type": "string"}
+            },
+            "required": ["status"]
+          }'
+
+          PROMPT="Remediate GitHub issue #${ISSUE_NUM} in chuangsta/superset: \"${ISSUE_TITLE}\"
+
+          Full issue context:
+          ${ISSUE_BODY}
+
+          Instructions:
+          - Follow the fix guidance in the issue exactly.
+          - If the issue requires a judgment call rather than a mechanical fix,
+            make the decision explicitly and document your reasoning in the PR description.
+          - Open a pull request referencing Closes #${ISSUE_NUM} in the description.
+          - Update structured output as you progress."
+
+          jq -n \
+            --arg prompt "$PROMPT" \
+            --arg repo "chuangsta/superset" \
+            --arg tag "issue-${ISSUE_NUM}" \
+            --argjson schema "$SCHEMA" \
+            '{
+              prompt: $prompt,
+              repos: [$repo],
+              tags: [$tag, "auto-remediation"],
+              structured_output_required: true,
+              structured_output_schema: $schema
+            }' > payload.json
+
+          RESPONSE=$(curl -s -X POST \
+            "https://api.devin.ai/v3/organizations/${DEVIN_ORG_ID}/sessions" \
+            -H "Authorization: Bearer ${DEVIN_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d @payload.json)
+
+          echo "$RESPONSE"
+          SESSION_ID=$(echo "$RESPONSE" | jq -r '.session_id')
+          echo "session_id=${SESSION_ID}" >> $GITHUB_OUTPUT
+          echo "✅ Devin session created: ${SESSION_ID} for issue #${ISSUE_NUM}"
