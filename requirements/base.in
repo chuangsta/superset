@@ -20,6 +20,15 @@
 urllib3>=2.6.3,<3.0.0
 # Security: CVE-2026-27199 - Windows device name handling in safe_join
 werkzeug>=3.1.6,<4.0.0
+# Security: CVE-2026-27205 - missing Vary: Cookie header on session access
+flask>=3.1.3,<4.0.0
+# Flask 3.1 removed flask.helpers.locked_cached_property, which flask-babel<4.0.0
+# imports at module load; 4.0.0 drops that import and is required for Flask 3.1.
+flask-babel>=4.0.0,<5.0.0
+# Flask 3.x removed flask._app_ctx_stack, which flask-sqlalchemy<3 imports at
+# module load. flask-sqlalchemy 3.0.x drops that import while still supporting
+# SQLAlchemy 1.4 (3.1+ requires SQLAlchemy>=2.0, which Superset does not use yet).
+flask-sqlalchemy>=3.0.3,<3.1
 # Security: CVE-2025-68146 - TOCTOU symlink vulnerability
 filelock>=3.20.3,<4.0.0
 # Security: decompression bomb fix (required by aiohttp 3.13.3)
