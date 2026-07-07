@@ -1,0 +1,63 @@
+name: Devin Session Status Check
+
+on:
+  workflow_dispatch:         # manual trigger
+
+jobs:
+  poll-sessions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Poll Devin sessions and update status
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_ORG_ID: ${{ secrets.DEVIN_ORG_ID }}
+        run: |
+          cat << 'PYEOF' > poll_sessions.py
+          import json
+          import os
+          import datetime
+          import requests
+
+          API = "https://api.devin.ai/v3/organizations"
+          ORG = os.environ["DEVIN_ORG_ID"]
+          KEY = os.environ["DEVIN_API_KEY"]
+          HDR = {"Authorization": f"Bearer {KEY}"}
+          LOG = "session-log.json"
+          OUT_JSON = "status.json"
+          OUT_MD = "status.md"
+
+          if os.path.exists(LOG):
+              log = json.load(open(LOG))
+          else:
+              print("No session-log.json found — nothing to poll yet.")
+              log = []
+
+          if not log:
+              json.dump([], open(OUT_JSON, "w"), indent=2)
+              with open(OUT_MD, "w") as f:
+                  f.write("# Devin Remediation Status\n\n")
+                  f.write("No sessions logged yet.\n")
+              exit(0)
+
+          rows = []
+          for entry in log:
+              sid = entry["session_id"]
+              try:
+                  r = requests.get(
+                      f"{API}/{ORG}/sessions/{
