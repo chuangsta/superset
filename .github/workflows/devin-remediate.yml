@@ -21,7 +21,15 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.label.name == 'devin-remediate'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
       - name: Resolve issue details
         id: issue
         run: |
@@ -105,3 +113,45 @@ jobs:
           SESSION_ID=$(echo "$RESPONSE" | jq -r '.session_id')
           echo "session_id=${SESSION_ID}" >> $GITHUB_OUTPUT
           echo "✅ Devin session created: ${SESSION_ID} for issue #${ISSUE_NUM}"
+
+      - name: Log session to session-log.json
+        env:
+          ISSUE_NUM: ${{ steps.issue.outputs.number }}
+          ISSUE_TITLE: ${{ steps.issue.outputs.title }}
+          SESSION_ID: ${{ steps.devin.outputs.session_id }}
+        run: |
+          pip install jq 2>/dev/null || true
+
+          # Read existing log
+          LOG="session-log.json"
+          EXISTING=$(cat "$LOG" 2>/dev/null || echo "[]")
+
+          # Append new entry
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          NEW_ENTRY=$(jq -n \
+            --arg session_id "$SESSION_ID" \
+            --arg issue_number "$ISSUE_NUM" \
+            --arg issue_title "$ISSUE_TITLE" \
+            --arg triggered_at "$TIMESTAMP" \
+            '{
+              session_id: $session_id,
+              issue_number: ($issue_number | tonumber),
+              issue_title: $issue_title,
+              triggered_at: $triggered_at,
+              status: "running",
+              pr_url: null,
+              acus_consumed: null
+            }')
+
+          echo "$EXISTING" | jq --argjson entry "$NEW_ENTRY" '. + [$entry]' > "$LOG"
+
+          echo "Session log updated:"
+          cat "$LOG"
+
+      - name: Commit session log
+        run: |
+          git config user.name "devin-status-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add session-log.json
+          git diff --staged --quiet || git commit -m "chore: log Devin session for issue #${{ steps.issue.outputs.number }} [skip ci]"
+          git push
