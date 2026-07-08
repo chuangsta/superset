@@ -78,6 +78,35 @@ jobs:
             --repo "${{ github.repository }}" \
             --remove-label "devin-remediate" || true
 
+      - name: Record duplicate prevented
+        if: steps.pr-check.outputs.open_prs != '0' && github.event_name != 'workflow_dispatch'
+        run: |
+          cat << 'PYEOF' > bump_duplicates.py
+          import json
+          import os
+
+          METRICS = "metrics.json"
+          if os.path.exists(METRICS):
+              try:
+                  metrics = json.load(open(METRICS))
+              except (ValueError, OSError):
+                  metrics = {}
+          else:
+              metrics = {}
+
+          metrics["duplicates_prevented"] = int(metrics.get("duplicates_prevented", 0) or 0) + 1
+          json.dump(metrics, open(METRICS, "w"), indent=2)
+          print(f"duplicates_prevented = {metrics['duplicates_prevented']}")
+          PYEOF
+          python3 bump_duplicates.py
+          rm -f bump_duplicates.py
+
+          git config user.name "devin-status-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add metrics.json
+          git diff --staged --quiet || git commit -m "chore: increment duplicates_prevented for issue #${{ steps.issue.outputs.number }} [skip ci]"
+          git push
+
       - name: Create Devin session
         if: steps.pr-check.outputs.open_prs == '0'
         id: devin

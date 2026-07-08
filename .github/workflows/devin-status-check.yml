@@ -2,12 +2,14 @@ name: Devin Session Status Check
 
 on:
   workflow_dispatch:         # manual trigger
+  workflow_call:             # reusable: called by devin-status-report.yml
 
 jobs:
   poll-sessions:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
 
     steps:
       - name: Checkout repo
@@ -40,8 +42,8 @@ jobs:
           HDR = {"Authorization": f"Bearer {KEY}"}
           LOG = "session-log.json"
           OUT_JSON = "status.json"
-          OUT_MD = "status.md"
 
+          # Load existing session log
           if os.path.exists(LOG):
               log = json.load(open(LOG))
           else:
@@ -49,10 +51,8 @@ jobs:
               log = []
 
           if not log:
+              # Write empty status file so downstream steps don't fail
               json.dump([], open(OUT_JSON, "w"), indent=2)
-              with open(OUT_MD, "w") as f:
-                  f.write("# Devin Remediation Status\n\n")
-                  f.write("No sessions logged yet.\n")
               exit(0)
 
           rows = []
@@ -60,4 +60,380 @@ jobs:
               sid = entry["session_id"]
               try:
                   r = requests.get(
-                      f"{API}/{ORG}/sessions/{
+                      f"{API}/{ORG}/sessions/{sid}",
+                      headers=HDR,
+                      timeout=10,
+                  ).json()
+                  prs = r.get("pull_requests") or []
+                  pr_url = prs[0].get("pr_url") if prs else None
+                  pr_state = prs[0].get("pr_state") if prs else None
+                  entry.update({
+                      "status": r.get("status_enum"),
+                      "pr_url": pr_url,
+                      "pr_state": pr_state,
+                      "acus_consumed": r.get("acus_consumed"),
+                      "structured_output": r.get("structured_output"),
+                      "polled_at": datetime.datetime.utcnow().isoformat(),
+                  })
+              except Exception as e:
+                  entry["poll_error"] = str(e)
+              rows.append(entry)
+
+          json.dump(rows, open(OUT_JSON, "w"), indent=2)
+
+          print("Polled sessions:")
+          for r in rows:
+              print(f"  Issue #{r.get('issue_number')} — {r.get('status')} — PR: {r.get('pr_url','none')}")
+          PYEOF
+          python3 poll_sessions.py
+
+      - name: Compute 7-day metrics and rebuild dashboard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          cat << 'PYEOF' > compute_metrics.py
+          import json
+          import os
+          import datetime
+          import requests
+
+          STATUS_JSON = "status.json"
+          METRICS_JSON = "metrics.json"
+          OUT_MD = "status.md"
+          WINDOW_DAYS = 7
+          # A running session older than this is flagged as needing attention.
+          STUCK_HOURS = 4
+
+          GH_TOKEN = os.environ.get("GH_TOKEN")
+          GH_REPO = os.environ.get("GITHUB_REPOSITORY", "")
+          GH_API = "https://api.github.com"
+          GH_HDR = {
+              "Authorization": f"Bearer {GH_TOKEN}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+
+          RUNNING = {"running"}
+          FINISHED = {"stopped", "finished", "expired", "completed"}
+
+          now = datetime.datetime.utcnow()
+          window_start = now - datetime.timedelta(days=WINDOW_DAYS)
+
+
+          def parse_ts(value):
+              if not value:
+                  return None
+              try:
+                  return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+              except (ValueError, AttributeError):
+                  return None
+
+
+          if os.path.exists(STATUS_JSON):
+              rows = json.load(open(STATUS_JSON))
+          else:
+              rows = []
+
+          # Preserve counters that are maintained by other workflows.
+          if os.path.exists(METRICS_JSON):
+              try:
+                  prev = json.load(open(METRICS_JSON))
+              except (ValueError, OSError):
+                  prev = {}
+          else:
+              prev = {}
+          duplicates_prevented = int(prev.get("duplicates_prevented", 0) or 0)
+
+          # Restrict to the rolling window.
+          window = []
+          for r in rows:
+              ts = parse_ts(r.get("triggered_at"))
+              if ts is not None and ts >= window_start:
+                  window.append(r)
+
+
+          def gh_pr_state(pr_url):
+              """Return (state, merged, created_at, merged_at) for a PR URL."""
+              if not (pr_url and GH_TOKEN and GH_REPO):
+                  return None
+              try:
+                  # pr_url looks like https://github.com/<owner>/<repo>/pull/<n>
+                  number = pr_url.rstrip("/").split("/")[-1]
+                  resp = requests.get(
+                      f"{GH_API}/repos/{GH_REPO}/pulls/{number}",
+                      headers=GH_HDR,
+                      timeout=10,
+                  )
+                  if resp.status_code != 200:
+                      return None
+                  data = resp.json()
+                  return {
+                      "state": data.get("state"),
+                      "merged": bool(data.get("merged")),
+                      "created_at": data.get("created_at"),
+                      "merged_at": data.get("merged_at"),
+                  }
+              except Exception:
+                  return None
+
+
+          # Enrich each windowed session with GitHub PR state.
+          for r in window:
+              r["_pr"] = gh_pr_state(r.get("pr_url"))
+
+          sessions_started = len(window)
+          opened = [r for r in window if r.get("pr_url")]
+          prs_opened = len(opened)
+
+          prs_merged = 0
+          prs_closed_unmerged = 0
+          time_to_pr = []
+          for r in opened:
+              pr = r.get("_pr") or {}
+              if pr.get("merged"):
+                  prs_merged += 1
+              elif pr.get("state") == "closed":
+                  prs_closed_unmerged += 1
+              created = parse_ts(pr.get("created_at"))
+              triggered = parse_ts(r.get("triggered_at"))
+              if created and triggered:
+                  time_to_pr.append((created - triggered).total_seconds() / 3600.0)
+
+          def is_blocked(r):
+              status = (r.get("status") or "").lower()
+              if status == "blocked":
+                  return True
+              return status in FINISHED and not r.get("pr_url")
+
+          sessions_blocked = sum(1 for r in window if is_blocked(r))
+          active_sessions = sum(1 for r in window if (r.get("status") or "").lower() in RUNNING)
+
+          total_acus = 0.0
+          for r in window:
+              acus = r.get("acus_consumed")
+              if isinstance(acus, (int, float)):
+                  total_acus += acus
+
+          success_rate = (prs_opened / sessions_started * 100) if sessions_started else 0.0
+          merge_rate = (prs_merged / prs_opened * 100) if prs_opened else 0.0
+          avg_time_to_pr = (sum(time_to_pr) / len(time_to_pr)) if time_to_pr else None
+
+          metrics = {
+              "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "window_days": WINDOW_DAYS,
+              "sessions_started": sessions_started,
+              "prs_opened": prs_opened,
+              "prs_merged": prs_merged,
+              "prs_closed_unmerged": prs_closed_unmerged,
+              "sessions_blocked": sessions_blocked,
+              "success_rate_pct": round(success_rate, 1),
+              "merge_rate_pct": round(merge_rate, 1),
+              "avg_time_to_pr_hours": round(avg_time_to_pr, 1) if avg_time_to_pr is not None else None,
+              "total_acus_consumed": round(total_acus, 1),
+              "duplicates_prevented": duplicates_prevented,
+              "active_sessions": active_sessions,
+          }
+          json.dump(metrics, open(METRICS_JSON, "w"), indent=2)
+
+
+          def humanize_age(ts):
+              if not ts:
+                  return "—"
+              delta = now - ts
+              hours = delta.total_seconds() / 3600.0
+              if hours < 1:
+                  return f"{int(delta.total_seconds() / 60)}m ago"
+              if hours < 48:
+                  return f"{int(hours)}h ago"
+              return f"{int(hours / 24)}d ago"
+
+
+          def sid_short(r):
+              sid = r.get("session_id", "")
+              return (sid[:12] + "…") if sid else "—"
+
+
+          avg_str = f"{metrics['avg_time_to_pr_hours']}" if metrics["avg_time_to_pr_hours"] is not None else "—"
+
+          with open(OUT_MD, "w") as f:
+              f.write("# Devin Remediation Status\n")
+              f.write(f"Last updated: {now.strftime('%Y-%m-%d %H:%M UTC')}\n\n")
+
+              f.write(f"## {WINDOW_DAYS}-Day Summary\n")
+              f.write("| Metric                        | Value |\n")
+              f.write("|-------------------------------|-------|\n")
+              f.write(f"| Sessions started              | {metrics['sessions_started']} |\n")
+              f.write(f"| PRs opened                    | {metrics['prs_opened']} |\n")
+              f.write(f"| PRs merged                    | {metrics['prs_merged']} |\n")
+              f.write(f"| PRs closed (unmerged)         | {metrics['prs_closed_unmerged']} |\n")
+              f.write(f"| Success rate                  | {metrics['success_rate_pct']}% |\n")
+              f.write(f"| Merge rate                    | {metrics['merge_rate_pct']}% |\n")
+              f.write(f"| Avg time to PR (hours)        | {avg_str} |\n")
+              f.write(f"| Active sessions               | {metrics['active_sessions']} |\n")
+              f.write(f"| Sessions blocked              | {metrics['sessions_blocked']} |\n")
+              f.write(f"| Duplicates prevented          | {metrics['duplicates_prevented']} |\n")
+              f.write(f"| Total ACUs consumed           | {metrics['total_acus_consumed']} |\n\n")
+
+              # Needs Attention: blocked sessions or long-running ones.
+              f.write("## Needs Attention\n")
+              f.write("| Issue | Session | Status | Reason |\n")
+              f.write("|---|---|---|---|\n")
+              attention = False
+              for r in window:
+                  status = (r.get("status") or "unknown").lower()
+                  reason = None
+                  if is_blocked(r):
+                      reason = "Stopped without a PR" if status != "blocked" else "Blocked — needs human"
+                  elif status in RUNNING:
+                      triggered = parse_ts(r.get("triggered_at"))
+                      if triggered and (now - triggered).total_seconds() / 3600.0 > STUCK_HOURS:
+                          reason = f"Running >{STUCK_HOURS}h without a PR"
+                  if reason:
+                      attention = True
+                      f.write(f"| #{r.get('issue_number')} | {sid_short(r)} | {status} | {reason} |\n")
+              if not attention:
+                  f.write("| — | — | — | Nothing needs attention |\n")
+              f.write("\n")
+
+              # Recently Completed: merged PRs.
+              f.write("## Recently Completed\n")
+              f.write("| Issue | PR | Merged | ACUs |\n")
+              f.write("|---|---|---|---|\n")
+              completed = False
+              for r in opened:
+                  pr = r.get("_pr") or {}
+                  if pr.get("merged"):
+                      completed = True
+                      acus = r.get("acus_consumed")
+                      acus_str = acus if isinstance(acus, (int, float)) else "—"
+                      f.write(f"| #{r.get('issue_number')} | {r.get('pr_url')} | yes | {acus_str} |\n")
+              if not completed:
+                  f.write("| — | — | — | — |\n")
+              f.write("\n")
+
+              # In Progress: active sessions.
+              f.write("## In Progress\n")
+              f.write("| Issue | Session | Started |\n")
+              f.write("|---|---|---|\n")
+              in_progress = False
+              for r in window:
+                  if (r.get("status") or "").lower() in RUNNING:
+                      in_progress = True
+                      f.write(f"| #{r.get('issue_number')} | {sid_short(r)} | {humanize_age(parse_ts(r.get('triggered_at')))} |\n")
+              if not in_progress:
+                  f.write("| — | — | — |\n")
+              f.write("\n")
+
+          # Drop internal helper keys from the persisted status file.
+          for r in rows:
+              r.pop("_pr", None)
+          json.dump(rows, open(STATUS_JSON, "w"), indent=2)
+
+          print("Metrics computed:")
+          print(json.dumps(metrics, indent=2))
+          PYEOF
+          python3 compute_metrics.py
+
+      - name: Commit updated status files
+        run: |
+          git config user.name "devin-status-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add status.json metrics.json status.md session-log.json || true
+          git diff --staged --quiet || git commit -m "chore: update Devin remediation status [skip ci]"
+          git push
+
+  publish-pages:
+    needs: poll-sessions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: master
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install markdown
+
+      - name: Render dashboard site
+        run: |
+          cat << 'PYEOF' > render_site.py
+          import json
+          import os
+          import markdown
+
+          SITE = "site"
+          os.makedirs(SITE, exist_ok=True)
+
+          if os.path.exists("status.md"):
+              md_text = open("status.md").read()
+          else:
+              md_text = "# Devin Remediation Status\n\nNo dashboard generated yet."
+
+          body = markdown.markdown(md_text, extensions=["tables"])
+
+          html = f"""<!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <meta http-equiv="refresh" content="300">
+            <title>Devin Remediation Dashboard</title>
+            <style>
+              body {{ font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+                      max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1b1f24; }}
+              h1 {{ border-bottom: 2px solid #eaecef; padding-bottom: .3rem; }}
+              h2 {{ margin-top: 2rem; border-bottom: 1px solid #eaecef; padding-bottom: .2rem; }}
+              table {{ border-collapse: collapse; width: 100%; margin: 1rem 0; }}
+              th, td {{ border: 1px solid #d0d7de; padding: 6px 12px; text-align: left; }}
+              th {{ background: #f6f8fa; }}
+              tr:nth-child(even) td {{ background: #fbfcfd; }}
+              .links {{ margin-top: 2rem; font-size: .9rem; color: #57606a; }}
+              a {{ color: #0969da; }}
+            </style>
+          </head>
+          <body>
+          {body}
+          <p class="links">Machine-readable: <a href="metrics.json">metrics.json</a> &middot;
+          <a href="status.json">status.json</a></p>
+          </body>
+          </html>
+          """
+          with open(os.path.join(SITE, "index.html"), "w") as f:
+              f.write(html)
+
+          # Ship the machine-readable artifacts alongside the page.
+          for name in ("metrics.json", "status.json", "status.md"):
+              if os.path.exists(name):
+                  with open(name) as src, open(os.path.join(SITE, name), "w") as dst:
+                      dst.write(src.read())
+
+          print("Rendered dashboard to", SITE)
+          PYEOF
+          python3 render_site.py
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
