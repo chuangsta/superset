@@ -1,0 +1,12 @@
+name: Devin Status Report
+
+# Refresh the remediation dashboard whenever a PR is merged or closed, so
+# status.md / metrics.json reflect merged and abandoned remediation work.
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  refresh-status:
+    uses: ./.github/workflows/devin-status-check.yml
+    secrets: inherit
