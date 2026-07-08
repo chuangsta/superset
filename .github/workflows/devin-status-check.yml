@@ -342,3 +342,97 @@ jobs:
           git add status.json metrics.json status.md session-log.json || true
           git diff --staged --quiet || git commit -m "chore: update Devin remediation status [skip ci]"
           git push
+
+  publish-pages:
+    needs: poll-sessions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install markdown
+
+      - name: Render dashboard site
+        run: |
+          cat << 'PYEOF' > render_site.py
+          import json
+          import os
+          import markdown
+
+          SITE = "site"
+          os.makedirs(SITE, exist_ok=True)
+
+          if os.path.exists("status.md"):
+              md_text = open("status.md").read()
+          else:
+              md_text = "# Devin Remediation Status\n\nNo dashboard generated yet."
+
+          body = markdown.markdown(md_text, extensions=["tables"])
+
+          html = f"""<!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <meta http-equiv="refresh" content="300">
+            <title>Devin Remediation Dashboard</title>
+            <style>
+              body {{ font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+                      max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1b1f24; }}
+              h1 {{ border-bottom: 2px solid #eaecef; padding-bottom: .3rem; }}
+              h2 {{ margin-top: 2rem; border-bottom: 1px solid #eaecef; padding-bottom: .2rem; }}
+              table {{ border-collapse: collapse; width: 100%; margin: 1rem 0; }}
+              th, td {{ border: 1px solid #d0d7de; padding: 6px 12px; text-align: left; }}
+              th {{ background: #f6f8fa; }}
+              tr:nth-child(even) td {{ background: #fbfcfd; }}
+              .links {{ margin-top: 2rem; font-size: .9rem; color: #57606a; }}
+              a {{ color: #0969da; }}
+            </style>
+          </head>
+          <body>
+          {body}
+          <p class="links">Machine-readable: <a href="metrics.json">metrics.json</a> &middot;
+          <a href="status.json">status.json</a></p>
+          </body>
+          </html>
+          """
+          with open(os.path.join(SITE, "index.html"), "w") as f:
+              f.write(html)
+
+          # Ship the machine-readable artifacts alongside the page.
+          for name in ("metrics.json", "status.json", "status.md"):
+              if os.path.exists(name):
+                  with open(name) as src, open(os.path.join(SITE, name), "w") as dst:
+                      dst.write(src.read())
+
+          print("Rendered dashboard to", SITE)
+          PYEOF
+          python3 render_site.py
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
