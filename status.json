@@ -1,0 +1,52 @@
+[
+  {
+    "session_id": "dbb0b93eac5748a29c429493a0353459",
+    "issue_number": 6,
+    "issue_title": "[CVE-2026-27205] Flask 2.3.3 fails to set Vary: Cookie header on session access",
+    "triggered_at": "2026-07-07T12:01:22Z",
+    "status": null,
+    "pr_url": "https://github.com/chuangsta/superset/pull/8",
+    "acus_consumed": 0.0,
+    "pr_state": "closed",
+    "structured_output": {
+      "notes": "Upgraded Flask 2.3.3 -> 3.1.3 (CVE-2026-27205), flask-babel 3.1.0 -> 4.0.0. Added _flask_compat.py shim for flask-sqlalchemy 2.5.x (blocked from 3.x by sqlalchemy<2 constraint). Fixed flask.escape -> markupsafe.escape in tests. All 35 CI checks pass.",
+      "pr_url": "https://github.com/chuangsta/superset/pull/11",
+      "status": "complete",
+      "files_changed": [
+        "requirements/base.in",
+        "requirements/base.txt",
+        "requirements/development.txt",
+        "superset/_flask_compat.py",
+        "superset/__init__.py",
+        "tests/integration_tests/dashboard_tests.py",
+        "tests/integration_tests/dashboards/security/security_dataset_tests.py"
+      ],
+      "tests_passing": true
+    },
+    "polled_at": "2026-07-08T12:43:38.799693"
+  },
+  {
+    "session_id": "c8f664ffc193471b9f9227b8ff4108d4",
+    "issue_number": 7,
+    "issue_title": "[CVE-2026-44405] Paramiko 3.5.1 allows SHA-1 in rsakey.py (no fix version yet)",
+    "triggered_at": "2026-07-07T12:01:41Z",
+    "status": null,
+    "pr_url": "https://github.com/chuangsta/superset/pull/10",
+    "acus_consumed": 0.0,
+    "pr_state": "closed",
+    "structured_output": {
+      "notes": "Remediated CVE-2026-44405. Investigation: sshtunnel 0.4.0 builds its own paramiko.Transport internally and rejects unknown kwargs, so the tunnel connection cannot be configured to reject SHA-1 via that library. Where Superset controls the transport directly (host-key verification probe in superset/extensions/ssh.py), added a mitigation passing disabled_algorithms={'pubkeys': ['ssh-rsa']}, gated behind new config flag SSH_TUNNEL_REJECT_SHA1_KEYS (default True) with an escape hatch for legacy servers. Residual risk (sshtunnel-managed tunnel; no upstream paramiko fix) documented as accepted with re-check-on-next-release note in config.py, pyproject.toml, and UPDATING.md. 19 unit tests pass; ruff S,B clean on changed source. PR #10 opened (Closes #7) with CI passing (22 passed, 0 failed), then closed and branch deleted by repo owner chuangsta (not a CI failure or requested change).",
+      "pr_url": "https://github.com/chuangsta/superset/pull/10",
+      "status": "complete",
+      "files_changed": [
+        "superset/extensions/ssh.py",
+        "superset/config.py",
+        "pyproject.toml",
+        "UPDATING.md",
+        "tests/unit_tests/extensions/ssh_test.py"
+      ],
+      "tests_passing": true
+    },
+    "polled_at": "2026-07-08T12:43:39.140418"
+  }
+]

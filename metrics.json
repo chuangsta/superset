@@ -1,0 +1,15 @@
+{
+  "generated_at": "2026-07-08T12:43:39Z",
+  "window_days": 7,
+  "sessions_started": 2,
+  "prs_opened": 2,
+  "prs_merged": 0,
+  "prs_closed_unmerged": 2,
+  "sessions_blocked": 0,
+  "success_rate_pct": 100.0,
+  "merge_rate_pct": 0.0,
+  "avg_time_to_pr_hours": 0.1,
+  "total_acus_consumed": 0.0,
+  "duplicates_prevented": 0,
+  "active_sessions": 0
+}
