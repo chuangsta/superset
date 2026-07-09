@@ -16,5 +16,14 @@
     "status": "running",
     "pr_url": null,
     "acus_consumed": null
+  },
+  {
+    "session_id": "8d37198422fd4344bf940a5b6978725e",
+    "issue_number": 14,
+    "issue_title": "[Code Quality] Remove unused imports in superset/views/core.py",
+    "triggered_at": "2026-07-09T12:06:43Z",
+    "status": "running",
+    "pr_url": null,
+    "acus_consumed": null
   }
 ]
