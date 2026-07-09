@@ -19,6 +19,9 @@
 # Security: CVE-2026-21441 - decompression bomb bypass on redirects
 urllib3>=2.6.3,<3.0.0
 # Security: CVE-2026-27199 - Windows device name handling in safe_join
+# Compatibility: Flask 3.x requires Werkzeug >=3.0.0; keep the floor at the
+# security-fixed 3.1.6 (well above the >=3.0.6 minimum) so a Flask 3.x upgrade
+# cannot resolve an incompatible Werkzeug 2.x.
 werkzeug>=3.1.6,<4.0.0
 # Security: CVE-2025-68146 - TOCTOU symlink vulnerability
 filelock>=3.20.3,<4.0.0
