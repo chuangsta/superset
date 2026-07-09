@@ -222,6 +222,7 @@ markdown-it-py==3.0.0
     # via rich
 markupsafe==3.0.2
     # via
+    #   flask
     #   jinja2
     #   mako
     #   werkzeug
