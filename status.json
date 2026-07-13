@@ -23,7 +23,7 @@
       ],
       "tests_passing": true
     },
-    "polled_at": "2026-07-09T11:20:19.470347"
+    "polled_at": "2026-07-13T07:27:58.569839"
   },
   {
     "session_id": "c8f664ffc193471b9f9227b8ff4108d4",
@@ -47,6 +47,23 @@
       ],
       "tests_passing": true
     },
-    "polled_at": "2026-07-09T11:20:19.650764"
+    "polled_at": "2026-07-13T07:27:58.894403"
+  },
+  {
+    "session_id": "8d37198422fd4344bf940a5b6978725e",
+    "issue_number": 14,
+    "issue_title": "[Code Quality] Remove unused imports in superset/views/core.py",
+    "triggered_at": "2026-07-09T12:06:43Z",
+    "status": null,
+    "pr_url": null,
+    "acus_consumed": 0.0,
+    "pr_state": null,
+    "structured_output": {
+      "notes": "No F401 violations exist in superset/views/core.py. Verified with the exact command from the issue: `ruff check --select F401 superset/views/core.py` (ruff 0.15.20) => 'All checks passed!' (exit 0), and independently with pyflakes 3.2.0 (no 'imported but unused' output). Repo ruff config enables F401 (not in ignore list, no per-file-ignore for this file). This is a false-positive automated issue: no unused imports to remove, so no diff and no PR. Awaiting user decision (close as false positive / leave / broaden scan).",
+      "status": "blocked",
+      "files_changed": [],
+      "tests_passing": false
+    },
+    "polled_at": "2026-07-13T07:27:59.214693"
   }
 ]

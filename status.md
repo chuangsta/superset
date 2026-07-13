@@ -1,14 +1,14 @@
 # Devin Remediation Status
-Last updated: 2026-07-09 11:20 UTC
+Last updated: 2026-07-13 07:27 UTC
 
 ## 7-Day Summary
 | Metric                        | Value |
 |-------------------------------|-------|
-| Sessions started              | 2 |
+| Sessions started              | 3 |
 | PRs opened                    | 2 |
 | PRs merged                    | 0 |
 | PRs closed (unmerged)         | 2 |
-| Success rate                  | 100.0% |
+| Success rate                  | 66.7% |
 | Merge rate                    | 0.0% |
 | Avg time to PR (hours)        | 0.1 |
 | Active sessions               | 0 |
