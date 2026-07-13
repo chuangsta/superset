@@ -80,11 +80,6 @@ erd.svg
 intro_header.txt
 TODO.md
 
-# auto-generated Devin remediation status artifacts
-status.md
-status.json
-metrics.json
-
 # for LLMs
 llm-context.md
 llms.txt
