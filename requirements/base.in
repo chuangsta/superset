@@ -35,6 +35,13 @@ pyarrow>=24.0.0,<25.0.0
 pyopenssl>=26.0.0,<27.0.0
 # Security: CVE-2026-25645 (MEDIUM) - Insecure Temporary File
 requests>=2.33.0,<3.0.0
+# Security: CVE-2026-44405 (LOW) - Paramiko allows SHA-1 in rsakey.py. Accepted
+# residual risk: the fixed release (paramiko 5.0.0) drops the paramiko.DSSKey API
+# that sshtunnel 0.4.0 still uses, and sshtunnel does not forward paramiko's
+# `disabled_algorithms`, so neither a version bump nor a config mitigation is
+# viable yet. See the full rationale and TODO(CVE-2026-44405) re-check note on the
+# paramiko declaration in pyproject.toml. Do not downgrade or pin around this.
+paramiko>=3.4.0,<4.0
 
 # 5.0.0 has a sensitive deprecation used in other libs
 # -> https://github.com/aio-libs/async-timeout/blob/master/CHANGES.rst#500-2024-10-31

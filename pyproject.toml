@@ -88,7 +88,19 @@ dependencies = [
     "bottleneck", # recommended performance dependency for pandas, see https://pandas.pydata.org/docs/getting_started/install.html#performance-dependencies-recommended
     # --------------------------
     "parsedatetime",
-    "paramiko>=3.4.0, <4.0", # 4.0 removed DSSKey, still referenced by sshtunnel
+    # Accepted risk: CVE-2026-44405 / GHSA-r374-rxx8-8654 (LOW) - rsakey.py allows
+    # SHA-1. Paramiko 5.0.0 removes SHA-1 RSA signatures, but sshtunnel 0.4.0
+    # accesses `paramiko.DSSKey` while constructing a forwarder; that API was
+    # removed in Paramiko 4.0.0, so the fixed release cannot be used safely.
+    # Paramiko exposes `disabled_algorithms` on `Transport`, but sshtunnel constructs
+    # `paramiko.Transport(_socket)` internally and rejects unknown kwargs, so the
+    # setting cannot be passed through `sshtunnel.open_tunnel(...)` (see
+    # superset/extensions/ssh.py). Exposure is limited: SSH tunnel endpoints are
+    # operator-configured, trusted destinations (deployment-time trust boundary per
+    # SECURITY.md), and opt-in host-key verification is available.
+    # TODO(CVE-2026-44405): re-check when sshtunnel supports Paramiko 5, then upgrade
+    # Paramiko and remove this accepted-risk note.
+    "paramiko>=3.4.0, <4.0",
     "pgsanity",
     "Pillow>=11.0.0, <13",
     "polyline>=2.0.0, <3.0",
